@@ -10,17 +10,20 @@ DB = Path(__file__).parent / "data" / "comm_log.db"
 
 
 def split_statements(text):
-    """Split on semicolons, dropping comment-only and blank fragments."""
-    out = []
-    for raw in text.split(";"):
-        body = "\n".join(
-            line for line in raw.splitlines()
-            if line.strip() and not line.strip().startswith("--")
-        )
-        if body.strip():
-            out.append(raw.strip())
+    """Split on semicolons, ignoring those inside -- comments."""
+    out, buf, code = [], [], []
+    for line in text.splitlines():
+        buf.append(line)
+        stripped = line.split("--")[0]
+        code.append(stripped)
+        if ";" in stripped:
+            stmt = "\n".join(buf).strip()
+            if "\n".join(code).strip().rstrip(";").strip():
+                out.append(stmt)
+            buf, code = [], []
+    if "\n".join(code).strip():
+        out.append("\n".join(buf).strip())
     return out
-
 
 def render(cur):
     cols = [d[0] for d in cur.description]
