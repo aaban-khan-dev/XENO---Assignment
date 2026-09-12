@@ -1,17 +1,12 @@
--- ============================================================
--- Phase 6: integrity checks
+-- Phase 6: Integrity checks
 --
--- Conditions that would each change the final number if present. All
--- are plausible given the schema: communication_log has no foreign key,
--- customer_id is free text, and nothing constrains merchant_id to match
--- across the two tables.
---
--- A check that returns 0 is still a result. Recording what was ruled out
--- is part of the reconciliation, not preamble to it.
--- ============================================================
+-- Check for data issues that could affect the reconciliation or cause
+-- records to be incorrectly included, excluded, or counted twice.
 
--- Each row: one condition, the count found, and what its presence would
--- have meant for the metric.
+
+-- Check each potential integrity issue and record how many affected rows
+-- are present. Zero results are useful because they rule out possible
+-- explanations for the difference in the final count.
 SELECT
     'log rows with no matching campaign'                    AS check_name,
     COUNT(*)                                                AS found,
