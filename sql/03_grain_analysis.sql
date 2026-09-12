@@ -1,18 +1,11 @@
--- ============================================================
 -- Phase 3: grain of communication_log
 --
--- What does one row represent? The dictionary says one send attempt.
--- If that is right, a customer can appear more than once - and any
--- COUNT(*) is counting attempts, not people.
---
--- This determines whether the metric can be expressed as a single
--- aggregate at all.
--- ============================================================
+-- determining what one row of a table represents
 
 
--- 3.1 Is `id` the true grain?
--- If distinct ids equals row count, id is unique and the table has no
--- duplicate rows at the physical level.
+-- 3.1 Is id unique?
+-- check whether each row has unique id. 
+
 SELECT
     COUNT(*)            AS total_rows,
     COUNT(DISTINCT id)  AS distinct_ids,
@@ -20,11 +13,9 @@ SELECT
          THEN 'unique' ELSE 'DUPLICATES PRESENT' END AS verdict
 FROM communication_log;
 
-
 -- 3.2 Is (communication_id, customer_id) unique?
--- This is the grain question that matters. If a customer appears twice
--- against the same campaign, then one row is an attempt, not a person,
--- and the table cannot be counted as though it were one-per-customer.
+-- check whetehr same customer have multiple attempts for same campaign.
+
 SELECT
     COUNT(*)                                    AS distinct_pairs,
     (SELECT COUNT(*) FROM communication_log)    AS total_rows,
@@ -37,10 +28,8 @@ FROM (
 
 
 -- 3.3 Which pairs repeat, and where?
--- Locating the repeats matters more than counting them: a repeat inside
--- a retry chain means something different from a repeat inside a
--- campaign with no chain. This lists them with enough context to tell
--- the two cases apart later.
+-- Identify repeating customer-campaign pairs and inspect their context
+
 SELECT
     l.communication_id,
     c.name                      AS campaign_name,
@@ -58,10 +47,7 @@ ORDER BY l.communication_id, l.customer_id;
 
 
 -- 3.4 Does the same customer appear under more than one campaign?
--- Repeats within a campaign are one pattern; the same customer across
--- several campaigns is another. If campaigns are chained, those rows
--- may be the same underlying communication re-attempted rather than
--- separate events. This is the shape that breaks a flat COUNT.
+
 SELECT
     l.customer_id,
     COUNT(*)                              AS total_attempts,
@@ -74,9 +60,9 @@ ORDER BY total_attempts DESC, l.customer_id;
 
 
 -- 3.5 Attempts vs distinct customers, per campaign
--- The gap between these two columns per campaign is the size of the
--- counting problem. Where they are equal, grain does not matter.
--- Where they differ, the choice of aggregate changes the answer.
+-- comparing send attempts with distinct customers to see 
+-- if any campaign has multiple attempts per customer
+
 SELECT
     c.id                                AS campaign_id,
     c.name,
