@@ -1,26 +1,14 @@
 -- ============================================================
--- Phase 8: chain root resolution
+-- Phase 8: Chain root resolution
 --
--- Produces the mapping every later query depends on: eligible campaign
--- -> chain root, with the chained/standalone flag that selects the
--- counting rule.
---
--- Deliberately isolated from communication_log. The recursion walks
--- `campaign` only, which grows with marketing activity rather than send
--- volume - on production data this side stays small while the log grows
--- without bound. Keeping the graph walk separate from the fact join is
--- what lets the mapping be materialised and refreshed on campaign
--- change, instead of re-derived on every report run. See Phase 14.
+-- Build the campaign-to-root mapping that will be used to group
+-- sends belonging to the same retry chain.
 -- ============================================================
 
 
 -- 8.1 The mapping
--- Eligibility is applied INSIDE the recursion, so an ineligible campaign
--- is excluded and cannot carry its descendants into a chain. Here 9004
--- is a leaf so this makes no difference - but on data where an
--- ineligible campaign sits mid-chain, filtering after the walk would
--- silently attach its children to a root they no longer descend from
--- through eligible campaigns.
+-- Resolve each eligible campaign to its root and identify whether
+-- it belongs to a retry chain or is standalone.
 WITH RECURSIVE eligible AS (
     SELECT *
     FROM campaign
@@ -58,12 +46,8 @@ ORDER BY ch.root_id, ch.depth, ch.campaign_id;
 
 
 -- 8.2 Every eligible campaign is accounted for
--- The recursion starts from parent_id IS NULL. If an eligible campaign
--- were unreachable from any eligible root - because its parent was
--- excluded by the gate, or because of a cycle - it would be dropped
--- here and its log rows would vanish from the total without any error.
--- This confirms the mapping is complete before anything is counted on
--- top of it.
+-- Verify that every eligible campaign is connected to an eligible root
+-- before using the mapping for the final count.
 WITH RECURSIVE eligible AS (
     SELECT * FROM campaign
     WHERE creation_status IN ('approved','aborted','resumed','stopped')
