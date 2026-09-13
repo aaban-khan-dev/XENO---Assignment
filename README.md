@@ -1,6 +1,6 @@
-# Comm-Log Reconciliation — merchant 501, October 2026
+# Comm-Log Reconciliation — Merchant 501, October 2026
 
-**target_base = 22**
+> **Finance target:** `target_base = 22`
 
 ---
 
@@ -8,105 +8,188 @@
 
 | Section | What it covers |
 |---|---|
-| [1. The problem](#1-the-problem) | What was asked and what the gap is |
-| [2. Reconciliation bridge](#2-reconciliation-bridge) | Step-by-step from 30 to 22 |
-| [3. Running the queries](#3-running-the-queries) | Every command, starting with the full run |
-| [4. Why no single count reaches 22](#4-why-no-single-count-reaches-22) | The mixed-grain problem, and the two wrong answers |
-| [5. Repository layout](#5-repository-layout) | Where everything lives |
-| [6. Additional work](#6-additional-work) | Investigation write-up, findings, scalability — optional |
-| [7. Use of AI](#7-use-of-ai) | What was delegated, what was verified, where it was wrong |
+| [1. The problem](#1-the-problem) | Scope, starting point, and source of the gap |
+| [2. Reconciliation bridge](#2-reconciliation-bridge) | Step-by-step reconciliation from 30 to 22 |
+| [3. Running the queries](#3-running-the-queries) | How to reproduce the analysis and final result |
+| [4. Why no single count reaches 22](#4-why-no-single-count-reaches-22) | The mixed-grain counting rule behind the result |
+| [5. Repository layout](#5-repository-layout) | Structure of the project |
+| [6. Additional work](#6-additional-work) | Investigation, findings, and scalability analysis |
+| [7. Use of AI](#7-use-of-ai) | How AI was used and how the results were validated |
 
 ---
 
 ## 1. The problem
 
-Finance reports `target_base` for merchant 501's Diwali campaigns in October 2026 as **22**. A plain count of `communication_log` returns **30**.
+Finance reports a `target_base` of **22** for merchant `501` across its Diwali campaigns in October 2026.
 
-The gap is entirely definitional. Twelve data-quality checks all returned zero, so nothing here is a typo or a broken record. Every step below is a business rule about what counts as a qualifying send.
+A straightforward count of `communication_log` returns **30**.
+
+The investigation found no underlying data-quality issue: all twelve integrity checks returned zero. The difference comes from the **reporting rules and counting grain**, not from malformed or inconsistent records.
 
 ---
 
 ## 2. Reconciliation bridge
 
 | Step | Description | Result | Change | Reason |
-|------|-------------|--------|--------|--------|
-| 0 | Every row in `communication_log` | 30 | — | Starting point: one row per send attempt |
-| 1 | Exclude campaigns that failed the reporting gate | 26 | −4 | 9004 is `approval_awaiting`, so not signed off and not reportable |
-| 2 | Collapse retries within chain 9001 → 9002 → 9003 | 23 | −3 | C2 and C3 re-attempted after failure, same underlying communication |
-| 3 | Collapse retries within chain 9201 → 9202 | 22 | −1 | D1 re-attempted after failure |
-| final | Leave 9101 uncollapsed (standalone, no retry chain) | **22** | 0 | C20 delivered twice 10 days apart with no failure, so not a retry |
+|:---:|---|---:|---:|---|
+| 0 | Every row in `communication_log` | **30** | — | Starting point: one row represents one send attempt |
+| 1 | Exclude campaigns that fail the reporting gate | **26** | −4 | Campaign `9004` is `approval_awaiting`, so it is not reportable |
+| 2 | Collapse retries within `9001 → 9002 → 9003` | **23** | −3 | `C2` and `C3` were re-attempted through the same retry chain |
+| 3 | Collapse retries within `9201 → 9202` | **22** | −1 | `D1` was re-attempted through the same retry chain |
+| **Final** | Keep `9101` uncollapsed as a standalone campaign | **22** | **0** | `C20` was delivered twice with no retry relationship, so both sends remain separate events |
 
-The final row is not an adjustment. It is the adjustment deliberately **not** made, and it is where the metric's definition actually lives.
+The final row is not an adjustment. It represents the important business rule that prevents an additional, incorrect deduplication.
 
-**Every value in this table is computed from the database at run time, not hardcoded.** `sql/11_bridge.sql` reproduces it, and section 3 gives the commands.
+**All values in the bridge are calculated from the database at runtime; none are hardcoded.** The complete reconciliation is reproduced by `sql/11_bridge.sql`, with the commands provided below.
 
 ---
 
 ## 3. Running the queries
 
-Python 3 only. Nothing to install.
+**Requirement:** Python 3. No additional packages are required.
 
-```
+```bash
 git clone https://github.com/aaban-khan-dev/XENO---Assignment.git
 cd XENO---Assignment
 ```
 
-### Everything, in order
+### Full investigation
 
-```
+```bash
 python run.py --trail
 ```
 
-Runs the full reconciliation from the first table inventory through to the bridge — every profiling query, every check, every intermediate result, in the order the questions arose. This is the one to run to see how the number was reached rather than just what it is.
+Runs the complete investigation in sequence, from initial table profiling through the final reconciliation bridge. This is the recommended option for reviewing how the result was derived.
 
-### Just the answer
+### Final result only
 
-```
+```bash
 python run.py
 ```
 
-Prints the bridge table and the final number. Nothing else.
+Runs the bridge and final reconciliation and prints the resulting `target_base`.
 
-### A single file
+### Run an individual SQL file
 
-```
+```bash
 python run.py sql/09_target_base.sql
 ```
 
-Any file in `sql/` or `extra_sql/`. `sql/09_target_base.sql` is the query that computes the final number — parameterised on merchant and period through a `scope` CTE, so it runs for any merchant and any window rather than being hardcoded to this one.
+Any file under `sql/` or `extra_sql/` can be executed individually.
+
+`sql/09_target_base.sql` contains the final reconciliation query. The query uses a `scope` CTE for merchant and reporting-period parameters, so the logic is not hardcoded to a single merchant or time window.
 
 ### Additional analysis
 
-```
+```bash
 python run.py --extra
 ```
 
-Optional. Covered in section 6.
+Runs the optional analysis described in [Section 6](#6-additional-work).
 
-### On the supplied database
+### Database safety
 
-It is never modified. The reconciliation opens it read-only, so SQLite refuses any write. The `--extra` analysis creates indexes to compare query plans, so it runs against a temporary copy that is deleted afterwards.
+The supplied database is **not modified**.
+
+The core reconciliation opens the database in read-only mode. The scalability analysis temporarily creates indexes to compare query plans, but runs against a copy of the database and removes the copy afterwards.
 
 ---
 
 ## 4. Why no single count reaches 22
 
-After applying the reporting gate, the two obvious queries give:
+After applying the reporting gate, the two obvious counts are:
 
-- `COUNT(*)` — every send attempt: **26**
-- `COUNT(DISTINCT customer_id)` — every person: **21**
+- `COUNT(*)` — all qualifying send attempts: **26**
+- `COUNT(DISTINCT customer_id)` — all qualifying customers: **21**
 
-22 sits between them. A `WHERE` clause only ever removes rows, so it moves a count down, never up. **21 cannot be filtered up to 22.** That rules out every filtering approach at once, without having to enumerate them.
+Neither produces Finance's **22**.
 
-The reason is that `target_base` has a mixed grain. It counts *people* inside retry chains and *attempts* under standalone campaigns:
+The result cannot be obtained by adding another filter: a filter can only remove rows, so it cannot move **21 up to 22**. This rules out filtering as the explanation for the remaining difference.
+
+The underlying issue is the **counting grain**.
+
+`target_base` treats retry chains and standalone campaigns differently:
 
 | Chain root | Type | Attempts | Distinct customers | Qualifying |
-|---|---|---|---|---|
-| 9001 | chained | 13 | 10 | 10 |
-| 9101 | standalone | 7 | 6 | **7** |
-| 9201 | chained | 6 | 5 | 5 |
-| **Total** | | 26 | 21 | **22** |
+|:---:|:---:|---:|---:|---:|
+| `9001` | Chained | 13 | 10 | **10** |
+| `9101` | Standalone | 7 | 6 | **7** |
+| `9201` | Chained | 6 | 5 | **5** |
+| **Total** | | **26** | **21** | **22** |
 
-9101 is the only root taking the attempts column. That single row is the whole problem.
+For a **retry chain**, multiple attempts to the same customer represent the same underlying communication, so the customer is counted once.
 
-The arithmetic forces this independently of the documentation. There are five repeated sends in total. Collapsing all five gives 21, one short. Collapsing only the two chained
+For a **standalone campaign**, each send is a separate event, even when the same customer appears more than once.
+
+Campaign `9101` is therefore the key edge case. It contributes **7 attempts**, rather than its **6 distinct customers**.
+
+The final calculation is:
+
+```text
+Retry chain 9001 → 10
+Standalone campaign 9101 → 7
+Retry chain 9201 → 5
+                         ──
+                         22
+```
+
+This is why a global `COUNT(DISTINCT customer_id)` is one short, while a global `COUNT(*)` is four too high.
+
+---
+
+## 5. Repository layout
+
+```text
+data/        supplied files, unmodified
+sql/         reconciliation queries, one numbered file per step
+extra_sql/   additional analysis beyond the assignment brief
+docs/        investigation, findings, and scalability notes
+run.py       execution entry point
+```
+
+| Location | Purpose |
+|---|---|
+| `data/` | Supplied database and CSV files |
+| `sql/` | Core investigation and reconciliation |
+| `extra_sql/` | Additional analysis beyond the required submission |
+| `docs/` | Detailed reasoning, findings, and scalability analysis |
+| `run.py` | Common entry point for running the SQL workflow |
+
+---
+
+## 6. Additional work
+
+The repository includes three areas of analysis beyond the core submission. Each is self-contained and can be reviewed independently.
+
+**[Investigation write-up](docs/investigation.md)**  
+The complete investigation, including what each query was intended to establish, what it returned, and how each result informed the next step. The document presents the reasoning first, followed by the relevant SQL details.
+
+**[Findings](docs/findings.md)**  
+Additional analysis of what the dataset can and cannot distinguish. This includes deliberately incorrect query variants that also return `22`, because the fixture does not contain cases that would expose some of those differences. It also discusses an important ambiguity in the interpretation of the metric.
+
+**[Scalability](docs/scale.md)**  
+Query-plan analysis using SQLite's `EXPLAIN QUERY PLAN`, including the access path before and after test indexing and the limitations of indexing alone.
+
+---
+
+## 7. Use of AI
+
+AI was used as a development aid, primarily to pressure-test the reasoning and draft SQL that was subsequently validated against the database.
+
+**AI-assisted work**
+- Initial drafts of profiling and investigation queries
+- Recursive CTE structure for retry-chain resolution
+
+**Independent validation**
+- Every reported number was verified against the supplied database.
+- The SQL required to reproduce each result is included in the repository.
+
+**An error caught during validation**
+
+The first campaign node-classification query incorrectly classified campaign `9101` as a chain root rather than a standalone campaign.
+
+The issue was caused by a `LEFT JOIN`: campaigns without child rows produce `NULL`, not `0`, so the original `child_count = 0` condition did not identify `9101` correctly.
+
+A second calculation based on the recursive chain mapping produced a conflicting result, which exposed the issue. The query was corrected using `COALESCE`.
+
+This was a useful validation step: for a metric where the counting grain matters, deriving the same structural property through independent queries provides a direct check against implementation errors.
