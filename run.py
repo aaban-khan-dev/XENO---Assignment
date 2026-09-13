@@ -8,21 +8,34 @@ from pathlib import Path
 
 DB = Path(__file__).parent / "data" / "comm_log.db"
 
-
 def split_statements(text):
-    """Split on semicolons, ignoring those inside -- comments."""
-    out, buf, code = [], [], []
-    for line in text.splitlines():
-        buf.append(line)
-        stripped = line.split("--")[0]
-        code.append(stripped)
-        if ";" in stripped:
-            stmt = "\n".join(buf).strip()
-            if "\n".join(code).strip().rstrip(";").strip():
-                out.append(stmt)
-            buf, code = [], []
-    if "\n".join(code).strip():
-        out.append("\n".join(buf).strip())
+    """Split on semicolons that are outside string literals and comments."""
+    out, buf = [], []
+    in_str = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if in_str:
+            if ch == "'":
+                if i + 1 < len(text) and text[i + 1] == "'":
+                    buf.append("''"); i += 2; continue
+                in_str = False
+            buf.append(ch); i += 1; continue
+        if ch == "'":
+            in_str = True; buf.append(ch); i += 1; continue
+        if text[i:i+2] == "--":
+            j = text.find("\n", i)
+            j = len(text) if j == -1 else j
+            buf.append(text[i:j]); i = j; continue
+        if ch == ";":
+            stmt = "".join(buf).strip()
+            if any(l.strip() and not l.strip().startswith("--") for l in stmt.splitlines()):
+                out.append(stmt + ";")
+            buf = []; i += 1; continue
+        buf.append(ch); i += 1
+    tail = "".join(buf).strip()
+    if any(l.strip() and not l.strip().startswith("--") for l in tail.splitlines()):
+        out.append(tail)
     return out
 
 def render(cur):
