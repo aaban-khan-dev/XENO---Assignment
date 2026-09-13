@@ -49,6 +49,12 @@ step3 AS (SELECT (SELECT v FROM step2)
                  - (SELECT repeats FROM per_root WHERE root_id = 9201) AS v),
 final AS (SELECT (SELECT v FROM step3) AS v)
 
+-- 11.1 The bridge
+-- sort_key exists only to order the union and is dropped by the outer
+-- SELECT, since SQLite will not accept an expression in ORDER BY after
+-- a compound UNION ALL.
+SELECT step, description, result, change, reason FROM (
+
 SELECT 0                                                  AS sort_key,
        '0'                                                AS step,
        'Every row in communication_log'                   AS description,
@@ -84,4 +90,5 @@ UNION ALL SELECT 9,
        '0',
        'C20 delivered twice 10 days apart with no failure, so not a retry'
 
-ORDER BY 1;
+ORDER BY 1
+);

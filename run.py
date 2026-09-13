@@ -9,6 +9,7 @@ The supplied database is never written to. Files in extra_sql/ create
 indexes to compare query plans, so they run against a temporary copy
 that is deleted afterwards.
 """
+import re
 import shutil
 import sqlite3
 import sys
@@ -19,6 +20,8 @@ ROOT = Path(__file__).parent
 DB = ROOT / "data" / "comm_log.db"
 SQL = ROOT / "sql"
 EXTRA_SQL = ROOT / "extra_sql"
+
+HEADING = re.compile(r"^\s*--\s*\d+\.\d+")
 
 
 def files_in(folder):
@@ -64,6 +67,22 @@ def split_statements(text):
     return out
 
 
+def label_for(stmt):
+    """Heading for a statement.
+
+    Prefers a numbered comment line such as '-- 3.2 ...', which marks a
+    section heading. Falls back to the first comment line when no numbered
+    heading is present, since the last line of a multi-line comment block
+    is usually a sentence fragment rather than a title.
+    """
+    headings = [l.strip().lstrip("- ") for l in stmt.splitlines() if HEADING.match(l)]
+    if headings:
+        return headings[-1]
+    comments = [l.strip().lstrip("- ") for l in stmt.splitlines()
+                if l.strip().startswith("--") and "===" not in l]
+    return comments[0] if comments else ""
+
+
 def render(cur):
     if cur.description is None:
         return
@@ -85,11 +104,7 @@ def run_file(conn, path):
     print(f"  {path.name}")
     print("=" * 78 + "\n")
     for stmt in split_statements(path.read_text(encoding="utf-8")):
-        label = next(
-            (l.strip().lstrip("- ") for l in stmt.splitlines()
-             if l.strip().startswith("--") and "===" not in l),
-            "",
-        )
+        label = label_for(stmt)
         if label:
             print(f"-- {label}")
         render(conn.execute(stmt))

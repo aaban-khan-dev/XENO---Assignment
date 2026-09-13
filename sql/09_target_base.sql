@@ -68,6 +68,13 @@ per_root AS (
 )
 
 -- 9.1 Contribution per chain, then the total
+-- sort_key exists only to place the TOTAL row last and is dropped by the
+-- outer SELECT, since SQLite will not accept an expression in ORDER BY
+-- after a compound UNION ALL.
+SELECT root_id, chain_type, campaigns_in_chain,
+       attempts, distinct_customers, qualifying_sends
+FROM (
+
 SELECT
     0                       AS sort_key,
     CAST(root_id AS TEXT)   AS root_id,
@@ -83,4 +90,5 @@ UNION ALL
 SELECT 1, 'TOTAL', '', NULL, SUM(attempts), SUM(distinct_customers), SUM(qualifying_sends)
 FROM per_root
 
-ORDER BY 1, 2;
+ORDER BY 1, 2
+);
