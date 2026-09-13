@@ -1,12 +1,37 @@
-"""Execute a .sql file against the supplied SQLite database and print results.
+"""Run the target_base reconciliation against the supplied SQLite database.
 
-Usage: python run.py sql/01_table_inventory.sql
+  python run.py                  bridge table and the final number
+  python run.py --trail          the full investigation, sql/
+  python run.py --extra          additional analysis, extra_sql/
+  python run.py <path.sql>       a single file
+
+The supplied database is never written to. Files in extra_sql/ create
+indexes to compare query plans, so they run against a temporary copy
+that is deleted afterwards.
 """
+import shutil
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
-DB = Path(__file__).parent / "data" / "comm_log.db"
+ROOT = Path(__file__).parent
+DB = ROOT / "data" / "comm_log.db"
+SQL = ROOT / "sql"
+EXTRA_SQL = ROOT / "extra_sql"
+
+
+def files_in(folder):
+    """All .sql files in a folder, in filename order."""
+    return sorted(folder.glob("*.sql"))
+
+
+def answer_files():
+    """The bridge and the final metric - what the reconciliation asks for."""
+    wanted = ("bridge", "target_base")
+    found = [p for w in wanted for p in files_in(SQL) if w in p.name]
+    return found or files_in(SQL)
+
 
 def split_statements(text):
     """Split on semicolons that are outside string literals and comments."""
@@ -38,7 +63,10 @@ def split_statements(text):
         out.append(tail)
     return out
 
+
 def render(cur):
+    if cur.description is None:
+        return
     cols = [d[0] for d in cur.description]
     rows = [tuple("" if v is None else str(v) for v in r) for r in cur.fetchall()]
     widths = [
@@ -52,19 +80,61 @@ def render(cur):
     print(f"({len(rows)} rows)\n")
 
 
-def main():
-    path = Path(sys.argv[1])
-    conn = sqlite3.connect(DB)
+def run_file(conn, path):
+    print("\n" + "=" * 78)
+    print(f"  {path.name}")
+    print("=" * 78 + "\n")
     for stmt in split_statements(path.read_text(encoding="utf-8")):
         label = next(
-            (l.strip() for l in stmt.splitlines() if l.strip().startswith("--")),
+            (l.strip().lstrip("- ") for l in stmt.splitlines()
+             if l.strip().startswith("--") and "===" not in l),
             "",
         )
-        print("=" * 70)
-        print(label or stmt.splitlines()[0][:70])
-        print("=" * 70)
+        if label:
+            print(f"-- {label}")
         render(conn.execute(stmt))
+
+
+def run_readonly(paths):
+    """Read-only connection: SQLite refuses any write, so the supplied
+    database provably cannot be modified by these queries."""
+    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    for p in paths:
+        run_file(conn, p)
     conn.close()
+
+
+def run_on_copy(paths):
+    """These queries create and drop indexes, so work on a throwaway copy."""
+    tmpdir = Path(tempfile.mkdtemp())
+    tmp = tmpdir / "comm_log_copy.db"
+    shutil.copy(DB, tmp)
+    print(f"(temporary copy: {tmp} - the supplied database is untouched)")
+    try:
+        conn = sqlite3.connect(tmp)
+        for p in paths:
+            run_file(conn, p)
+        conn.close()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        run_readonly(answer_files())
+    elif args[0] == "--trail":
+        run_readonly(files_in(SQL))
+    elif args[0] == "--extra":
+        run_on_copy(files_in(EXTRA_SQL))
+    else:
+        path = Path(args[0])
+        if not path.is_absolute():
+            path = ROOT / path
+        if EXTRA_SQL.name in path.parts:
+            run_on_copy([path])
+        else:
+            run_readonly([path])
 
 
 if __name__ == "__main__":
